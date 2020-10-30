@@ -35,10 +35,10 @@ class Progress(dnf.callback.DownloadProgress):
 
 class ModelItem:
     label = '???'
-    row_count = 0
     col_count = 1
     icon_name = None
     replacement = None
+    children = ()
 
     def __init__(self, *, model=None, parent=None):
         if parent:
@@ -65,20 +65,18 @@ class ModelItem:
         return replacement
 
     def get_child(self, row, column):
-        return None
+        return self.children[row]
+
+    @property
+    def row_count(self):
+        return len(self.children)
 
 
 class QuerySet(ModelItem):
     def __init__(self, *, model):
         super().__init__(model=model)
         self.queries = []
-
-    @property
-    def row_count(self):
-        return len(self.queries)
-
-    def get_child(self, row, column):
-        return self.queries[row]
+        self.children = self.queries
 
 
 class Query(ModelItem):
@@ -99,20 +97,14 @@ class Query(ModelItem):
         self._query = q
 
     @cached_property
-    def packages(self):
+    def children(self):
         return [Package(p, parent=self) for p in self._query]
 
     @property
     def replacement(self):
-        if len(self.packages) == 1:
-            return self.packages[0]
+        if len(self.children) == 1:
+            return self.children[0]
 
-    @property
-    def row_count(self):
-        return len(self.packages)
-
-    def get_child(self, row, column):
-        return self.packages[row]
 
 class Subject(ModelItem):
     icon_name = 'list-alt'
@@ -123,21 +115,18 @@ class Subject(ModelItem):
         self.subject = dnf.subject.Subject(text)
 
     @cached_property
-    def packages(self):
+    def children(self):
         q = self.subject.get_best_query(self.model.base.sack)
-        return [Package(p, parent=self) for p in q]
+        return [
+            Package(p, parent=self)
+            for p in q
+            if p.arch in (the_arch, 'noarch')
+        ]
 
     @property
     def replacement(self):
-        if len(self.packages) == 1:
-            return self.packages[0]
-
-    @property
-    def row_count(self):
-        return len(self.packages)
-
-    def get_child(self, row, column):
-        return self.packages[row]
+        if len(self.children) >= 1:
+            return self.children[0]
 
 
 class Package(ModelItem):
@@ -178,25 +167,15 @@ class Package(ModelItem):
         return collapsed + rest
 
     @property
-    def row_count(self):
-        count = 0
+    def children(self):
+        result = []
         if self.source:
-            count += 1
+            result.append(self.source)
         if self.model.collapse_reqs:
-            count += len(self.collapsed_reqs)
+            result.extend(self.collapsed_reqs)
         else:
-            count += len(self.reqs)
-        return count
-
-    def get_child(self, row, column):
-        if self.source:
-            if row == 0:
-                return self.source
-            row -= 1
-        if self.model.collapse_reqs:
-            return self.collapsed_reqs[row]
-        else:
-            return self.reqs[row]
+            result.extend(self.reqs)
+        return result
 
 
 class Requirement(ModelItem):
@@ -216,11 +195,9 @@ class Requirement(ModelItem):
         return [Package(pkg, parent=self) for pkg in q]
 
     @property
-    def row_count(self):
-        return len(self.pkgs)
+    def children(self):
+        return self.pkgs
 
-    def get_child(self, row, column):
-        return self.pkgs[row]
 
 class Recommendation(Requirement):
     icon_name = 'plus'
@@ -366,13 +343,29 @@ def get_main():
     ri = pkg_model.get_queryset_index()
     pkg_model.add_query(ri, 'scipy', name='python3-scipy')
 
+    with open('want.txt') as f:
+        for line in f:
+            pkg_model.add_subject(ri, line.strip())
+
     wf.tvMainView.setModel(pkg_model.qt_model)
     wf.tvMainView.setRootIndex(ri)
     pkg_model.add_query(ri, 'python3-nose', name='python3-nose')
 
-    with open('want.txt') as f:
+    ri = pkg_model.get_queryset_index()
+    with open('unwant.txt') as f:
         for line in f:
             pkg_model.add_subject(ri, line.strip())
+
+    wf.tvUnwant.setModel(pkg_model.qt_model)
+    wf.tvUnwant.setRootIndex(ri)
+
+    ri = pkg_model.get_queryset_index()
+    with open('provided.txt') as f:
+        for line in f:
+            pkg_model.add_subject(ri, line.strip())
+
+    wf.tvProvided.setModel(pkg_model.qt_model)
+    wf.tvProvided.setRootIndex(ri)
 
     act = WidgetFinder(window, QAction)
     act.actExpandReqs.setIcon(get_icon('puzzle-piece'))
