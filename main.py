@@ -2,17 +2,21 @@ import sys
 import os
 from functools import cached_property
 from contextlib import contextmanager
+import enum
 
 from PySide2.QtCore import QAbstractItemModel, Qt, QModelIndex, QTimer, QSize
-from PySide2.QtWidgets import QApplication, QWidget, QAction
+from PySide2.QtCore import QPoint, QRect
+from PySide2.QtWidgets import QApplication, QWidget, QAction, QStyle
+from PySide2.QtWidgets import QStyledItemDelegate
 from PySide2.QtUiTools import QUiLoader
-from PySide2.QtGui import QIcon
+from PySide2.QtGui import QIcon, QFontMetrics, QColor, QBrush
 
 import dnf
 
 cachedir = '_dnf_cache'
 releasever = 'rawhide'
 the_arch = 'x86_64'
+
 
 _icons = {}
 def get_icon(name):
@@ -54,8 +58,9 @@ class ModelItem:
         elif role == Qt.DecorationRole:
             if self.icon_name:
                 return get_icon(self.icon_name)
-        elif role == Qt.SizeHintRole:
-            return QSize(18, 18)
+        elif role == Qt.ForegroundRole:
+            if color := self.model.package_colors.get(self):
+                return QBrush(QColor(color))
         return None
 
     def get_replacement(self):
@@ -135,7 +140,7 @@ class Package(ModelItem):
     def __init__(self, pkg, *, parent):
         super().__init__(parent=parent)
         self.pkg = pkg
-        self.label = f'{pkg.name}.{pkg.version}.{pkg.arch}'
+        self.label = pkg.name
         if not self.pkg.source_name:
             self.icon_name = 'wrench'
 
@@ -146,7 +151,7 @@ class Package(ModelItem):
 
     @cached_property
     def reqs(self):
-        reqs = [Requirement(r, parent=self) for r in self.pkg.requires]
+        reqs = sorted((Requirement(r, parent=self) for r in self.pkg.requires), key=lambda r: r.label)
         reqs += [Recommendation(r, parent=self) for r in self.pkg.recommends]
         reqs += [Recommendation(r, parent=self) for r in self.pkg.suggests]
         return reqs
@@ -164,7 +169,7 @@ class Package(ModelItem):
                     collapsed_pkgs.add(pkg.pkg)
             else:
                 rest.append(req)
-        return collapsed + rest
+        return sorted(collapsed, key=lambda r: r.label) + rest
 
     @property
     def children(self):
@@ -203,6 +208,44 @@ class Recommendation(Requirement):
     icon_name = 'plus'
 
 
+class CoroDriver:
+    def __init__(self, coro):
+        self.active = True
+        self.coro = coro
+        self.drive()
+
+    def drive(self):
+        if self.active:
+            try:
+                next(self.coro)
+            except StopIteration:
+                pass
+            else:
+                QTimer.singleShot(10, self.drive)
+                return
+        self.coro.close()
+        self.active = False
+
+
+def colorize(model):
+    yield
+    want, unwant, provide = model.querysets
+    model.package_colors = {}
+
+    def color(item, new_color):
+        if item in model.package_colors:
+            return
+        yield model._colorize(item, new_color)
+        if not isinstance(item, Package):
+            for child in item.children:
+                yield from color(child, new_color)
+
+    yield from color(unwant, 'red')
+    yield from color(provide, 'blue')
+    for i in range(10):
+        print(i)
+        yield
+
 
 class PkgModel:
     def __init__(self):
@@ -227,6 +270,11 @@ class PkgModel:
         self.base = base
 
         self.querysets = []
+
+        self.package_colors = {}
+
+        self._color_driver = None
+        self._recolor()
 
     def __enter__(self):
         pass
@@ -256,11 +304,23 @@ class PkgModel:
         )
         yield queryset
         self.qt_model.endInsertRows()
+        self._recolor()
 
     def set_expand_reqs(self, value):
         self.qt_model.layoutAboutToBeChanged.emit()
         self.collapse_reqs = not value
         self.qt_model.layoutChanged.emit()
+
+    def _recolor(self):
+        if self._color_driver:
+            self._color_driver.active = False
+        self._color_driver = CoroDriver(colorize(self))
+
+    def _colorize(self, item, new_color):
+        self.qt_model.layoutAboutToBeChanged.emit()
+        self.package_colors[item] = new_color
+        self.qt_model.layoutChanged.emit()
+
 
 class PkgQtModel(QAbstractItemModel):
     def __init__(self, model):
@@ -318,6 +378,11 @@ class PkgQtModel(QAbstractItemModel):
         return self.createIndex(0, 0, parent)
 
 
+class ItemDelegate(QStyledItemDelegate):
+    def sizeHint(self, option, index):
+        return QSize(20, QFontMetrics(option.font).lineSpacing())
+
+
 class WidgetFinder:
     def __init__(self, obj, cls=QWidget):
         self.obj = obj
@@ -329,11 +394,6 @@ class WidgetFinder:
             raise AttributeError(name)
         return widget
 
-def _ignore(obj):
-    pass
-
-def keep_alive(obj):
-    QTimer.singleShot(1, lambda: _ignore(obj))
 
 def get_main():
     window = QUiLoader().load('main.ui')
@@ -349,6 +409,7 @@ def get_main():
 
     wf.tvMainView.setModel(pkg_model.qt_model)
     wf.tvMainView.setRootIndex(ri)
+    wf.tvMainView.setItemDelegate(ItemDelegate())
     pkg_model.add_query(ri, 'python3-nose', name='python3-nose')
 
     ri = pkg_model.get_queryset_index()
@@ -357,6 +418,7 @@ def get_main():
             pkg_model.add_subject(ri, line.strip())
 
     wf.tvUnwant.setModel(pkg_model.qt_model)
+    wf.tvUnwant.setItemDelegate(ItemDelegate())
     wf.tvUnwant.setRootIndex(ri)
 
     ri = pkg_model.get_queryset_index()
@@ -365,6 +427,7 @@ def get_main():
             pkg_model.add_subject(ri, line.strip())
 
     wf.tvProvided.setModel(pkg_model.qt_model)
+    wf.tvProvided.setItemDelegate(ItemDelegate())
     wf.tvProvided.setRootIndex(ri)
 
     act = WidgetFinder(window, QAction)
