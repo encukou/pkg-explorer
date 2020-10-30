@@ -1,7 +1,0 @@
-gcc
-glibc
-libgcc
-libstdc++
-bash
-zlib
-ncurses-lib

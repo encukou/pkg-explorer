@@ -1,10 +1,7 @@
-from PySide2.QtGui import QIcon, QFontMetrics, QColor, QBrush
+from functools import lru_cache
 
-_icons = {}
+from PySide2.QtGui import QIcon, QImage, QColor, QBitmap, QPixmap
+
+@lru_cache
 def get_icon(name):
-    try:
-        return _icons[name]
-    except KeyError:
-        icon = QIcon(f'icons-fontawesome/{name}.svg')
-        _icons[name] = icon
-        return icon
+    return QIcon(f'icons-fontawesome/{name}.svg')

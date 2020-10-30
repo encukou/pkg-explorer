@@ -13,7 +13,7 @@ from PySide2.QtGui import QFontMetrics
 
 import dnf
 
-from .modelitems import QuerySet, Query, Subject, Package
+from .modelitems import Workload, ResolverInput, Labels, Label, AutoexpandRole
 from .consts import cachedir, releasever, the_arch
 from .util import get_icon
 
@@ -48,23 +48,10 @@ class CoroDriver:
 
 def colorize(model):
     yield
-    want, unwant, provide = model.querysets
-    model.package_colors = {}
-
-    def color(item, new_color):
-        if item.underlying_object in model.package_colors:
-            return
-        yield model._colorize(item, new_color)
-        if not isinstance(item, Package):
-            for child in item.children:
-                yield from color(child, new_color)
-
-    yield from color(unwant, 'red')
-    yield from color(provide, 'blue')
 
 
 class PkgModel:
-    def __init__(self):
+    def __init__(self, root_path):
         self.collapse_reqs = True
 
         self.qt_model = PkgQtModel(self)
@@ -85,12 +72,19 @@ class PkgModel:
 
         self.base = base
 
-        self.querysets = []
-
         self.package_colors = {}
 
         self._color_driver = None
         self._recolor()
+
+        self.labels = {}
+
+        self.labels_root = Labels(model=self)
+        self.sources_root = ResolverInput(root_path, model=self)
+        self.roots = [
+            self.sources_root,
+            self.labels_root,
+        ]
 
     def __enter__(self):
         pass
@@ -98,34 +92,21 @@ class PkgModel:
     def __exit__(self, *err):
         self.base.close()
 
-    def get_queryset_index(self):
-        qs = QuerySet(model=self)
-        self.querysets.append(qs)
-        return self.qt_model.createIndex(0, 0, qs)
-
-    def add_query(self, queryset_index, text, **kwargs):
-        with self._queryset_add_context(queryset_index, 1) as queryset:
-            queryset.queries.append(Query(**kwargs, parent=queryset))
-
-    def add_subject(self, queryset_index, text):
-        with self._queryset_add_context(queryset_index, 1) as queryset:
-            queryset.queries.append(Subject(text, parent=queryset))
-
-    @contextmanager
-    def _queryset_add_context(self, queryset_index, num_items):
-        queryset = queryset_index.internalPointer()
-        queries = queryset.queries
-        self.qt_model.beginInsertRows(
-            queryset_index, len(queries), len(queries) + num_items-1
-        )
-        yield queryset
-        self.qt_model.endInsertRows()
-        self._recolor()
+    def get_main_index(self, idx):
+        return self.qt_model.createIndex(self.roots.index(idx), 0, idx)
 
     def set_expand_reqs(self, value):
         self.qt_model.layoutAboutToBeChanged.emit()
         self.collapse_reqs = not value
         self.qt_model.layoutChanged.emit()
+
+    def ensure_label(self, lbl):
+        if lbl not in self.labels:
+            self.labels[lbl] = None
+            self.qt_model.layoutAboutToBeChanged.emit()
+            self.labels[lbl] = Label(lbl, parent=self.labels_root)
+            self._sorted_labels = [v for k, v in sorted(self.labels.items())]
+            self.qt_model.layoutChanged.emit()
 
     def _recolor(self):
         if self._color_driver:
@@ -150,7 +131,7 @@ class PkgQtModel(QAbstractItemModel):
         if not index.isValid():
             return None
         #self.checkIndex(index)
-        item = index.internalPointer().get_replacement()
+        item = index.internalPointer()
         return item.data(role)
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
@@ -161,25 +142,32 @@ class PkgQtModel(QAbstractItemModel):
         if not parent.isValid():
             return 1
         #self.checkIndex(parent)
-        item = parent.internalPointer().get_replacement()
+        item = parent.internalPointer()
         return item.row_count
 
     def columnCount(self, parent):
         if not parent.isValid():
             return 1
         #self.checkIndex(parent)
-        item = parent.internalPointer().get_replacement()
+        item = parent.internalPointer()
         return item.col_count
 
     def index(self, row, column, parent):
         if not parent.isValid():
             return QModelIndex()
         #self.checkIndex(parent)
-        item = parent.internalPointer().get_replacement()
+        item = parent.internalPointer()
         if item.row_count <= row or item.col_count <= column:
             return QModelIndex()
         child = item.get_child(row, column)
         return self.createIndex(row, column, child)
+
+    def hasChildren(self, parent):
+        if not parent.isValid():
+            return QModelIndex()
+        #self.checkIndex(parent)
+        item = parent.internalPointer()
+        return bool(item.has_children)
 
     def parent(self, index):
         if not index.isValid():
@@ -187,8 +175,6 @@ class PkgQtModel(QAbstractItemModel):
         #self.checkIndex(index, QAbstractItemModel.CheckIndexOption.DoNotUseParent)
         item = index.internalPointer()
         parent = item.parent
-        while parent and parent.get_replacement() == item:
-            parent = parent.parent
         if parent is None:
             return QModelIndex()
         return self.createIndex(0, 0, parent)
@@ -211,40 +197,27 @@ class WidgetFinder:
         return widget
 
 
+def setup_treeview(view, index):
+    view.setModel(index.model())
+    view.setRootIndex(index)
+    view.setItemDelegate(ItemDelegate())
+
+    def expand_more(index):
+        model = index.model()
+        if model.data(index, AutoexpandRole) and model.rowCount(index) == 1:
+            view.expand(model.index(0, 0, index))
+
+    view.expanded.connect(expand_more)
+
 def get_main():
     window = QUiLoader().load(str(Path(__file__).parent / 'main.ui'))
     wf = WidgetFinder(window)
 
-    pkg_model = PkgModel()
-    ri = pkg_model.get_queryset_index()
-    pkg_model.add_query(ri, 'scipy', name='python3-scipy')
+    pkg_model = PkgModel(Path('content-resolver-input/configs'))
+    setup_treeview(wf.tvMainView, pkg_model.get_main_index(pkg_model.sources_root))
 
-    with open('want.txt') as f:
-        for line in f:
-            pkg_model.add_subject(ri, line.strip())
-
-    wf.tvMainView.setModel(pkg_model.qt_model)
-    wf.tvMainView.setRootIndex(ri)
-    wf.tvMainView.setItemDelegate(ItemDelegate())
-    pkg_model.add_query(ri, 'python3-nose', name='python3-nose')
-
-    ri = pkg_model.get_queryset_index()
-    with open('unwant.txt') as f:
-        for line in f:
-            pkg_model.add_subject(ri, line.strip())
-
-    wf.tvUnwant.setModel(pkg_model.qt_model)
-    wf.tvUnwant.setItemDelegate(ItemDelegate())
-    wf.tvUnwant.setRootIndex(ri)
-
-    ri = pkg_model.get_queryset_index()
-    with open('provided.txt') as f:
-        for line in f:
-            pkg_model.add_subject(ri, line.strip())
-
-    wf.tvProvided.setModel(pkg_model.qt_model)
-    wf.tvProvided.setItemDelegate(ItemDelegate())
-    wf.tvProvided.setRootIndex(ri)
+    setup_treeview(wf.tvSources, pkg_model.get_main_index(pkg_model.sources_root))
+    setup_treeview(wf.tvLabels, pkg_model.get_main_index(pkg_model.labels_root))
 
     act = WidgetFinder(window, QAction)
     act.actExpandReqs.setIcon(get_icon('puzzle-piece'))
