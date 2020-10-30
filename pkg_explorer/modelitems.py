@@ -58,6 +58,10 @@ class ModelItem:
     def data(self, role=Qt.DisplayRole):
         if role == Qt.DisplayRole:
             return self.label
+        if role == Qt.ToolTipRole:
+            return self.extended_label
+        if role == Qt.StatusTipRole:
+            return self.extended_label
         elif role == Qt.DecorationRole:
             if self.icon_name:
                 return get_icon(self.icon_name, self.color)
@@ -79,6 +83,10 @@ class ModelItem:
     @property
     def row_count(self):
         return len(self.children)
+
+    @property
+    def extended_label(self):
+        return self.label
 
     has_children = row_count
 
@@ -187,6 +195,15 @@ class Package(ModelItem):
         if not self.pkg.source_name:
             self.icon_name = self.src_icon_name
         super().__init__(self.pkg, parent=parent)
+
+    @property
+    def extended_label(self):
+        pkg = self.pkg
+        if pkg.epoch:
+            epoch_part = f'{pkg.epoch}!'
+        else:
+            epoch_part = ''
+        return f'{pkg.name}–{epoch_part}{pkg.version}–{pkg.release}.{pkg.arch}'
 
     @cached_property
     def sources(self):
@@ -311,6 +328,5 @@ class Provide(Requirement):
         result = []
         q = self.model.base.sack.query()
         q = q.available()
-        print(self.reldep, type(self.reldep))
         q = q.filter(requires=self.reldep, arch=[the_arch, 'noarch'])
         return [UnwantedPackage(pkg, parent=self) for pkg in q]

@@ -64,6 +64,9 @@
     <layout class="QVBoxLayout" name="verticalLayout_3">
      <item>
       <widget class="QTreeView" name="tvSources">
+       <property name="expandsOnDoubleClick">
+        <bool>false</bool>
+       </property>
        <attribute name="headerVisible">
         <bool>false</bool>
        </attribute>
@@ -83,6 +86,12 @@
     <layout class="QVBoxLayout" name="verticalLayout_4">
      <item>
       <widget class="QTreeView" name="tvLabels">
+       <property name="rootIsDecorated">
+        <bool>false</bool>
+       </property>
+       <property name="expandsOnDoubleClick">
+        <bool>false</bool>
+       </property>
        <attribute name="headerVisible">
         <bool>false</bool>
        </attribute>

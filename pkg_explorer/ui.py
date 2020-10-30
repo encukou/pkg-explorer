@@ -15,6 +15,7 @@ import dnf
 
 from .modelitems import Workload, ResolverInput, Labels, Label, AutoexpandRole
 from .consts import cachedir, releasever, the_arch
+from .coloring import colorize
 from .util import get_icon
 
 
@@ -46,10 +47,6 @@ class CoroDriver:
         self.active = False
 
 
-def colorize(model):
-    yield
-
-
 class PkgModel:
     def __init__(self, root_path):
         self.collapse_reqs = True
@@ -75,7 +72,6 @@ class PkgModel:
         self.obj_colors = {}
 
         self._color_driver = None
-        self._recolor()
 
         self.labels = {}
 
@@ -85,6 +81,8 @@ class PkgModel:
             self.sources_root,
             self.labels_root,
         ]
+
+        self.active_indexes = {}
 
     def __enter__(self):
         pass
@@ -96,17 +94,15 @@ class PkgModel:
         return self.qt_model.createIndex(self.roots.index(idx), 0, idx)
 
     def set_expand_reqs(self, value):
-        self.qt_model.layoutAboutToBeChanged.emit()
-        self.collapse_reqs = not value
-        self.qt_model.layoutChanged.emit()
+        with self.changing_layout():
+            self.collapse_reqs = not value
 
     def ensure_label(self, lbl):
         if lbl not in self.labels:
             self.labels[lbl] = None
-            self.qt_model.layoutAboutToBeChanged.emit()
-            self.labels[lbl] = Label(lbl, parent=self.labels_root)
-            self._sorted_labels = [v for k, v in sorted(self.labels.items())]
-            self.qt_model.layoutChanged.emit()
+            with self.changing_layout():
+                self.labels[lbl] = Label(lbl, parent=self.labels_root)
+                self._sorted_labels = [v for k, v in sorted(self.labels.items())]
 
     def _recolor(self):
         if self._color_driver:
@@ -114,17 +110,24 @@ class PkgModel:
         self._color_driver = CoroDriver(colorize(self))
 
     def _colorize(self, item, new_color):
-        self.package_colors[item.underlying_object] = new_color
+        self.obj_colors[item.underlying_object] = new_color
 
-    def set_active_label_index(self, index):
+    def set_active_index(self, index):
         item = index.internalPointer()
+        self.active_indexes[type(item)] = item.underlying_object
+        with self.changing_layout():
+            self.obj_colors.clear()
+        #for lbl in self.labels:
+        #    if item.label != lbl:
+        #        self.obj_colors[('label', lbl)] = Qt.gray
+        #    else:
+        #        self.obj_colors[('label', lbl)] = Qt.blue
+        self._recolor()
+
+    @contextmanager
+    def changing_layout(self):
         self.qt_model.layoutAboutToBeChanged.emit()
-        self.obj_colors.clear()
-        for lbl in self.labels:
-            if item.label != lbl:
-                self.obj_colors[('label', lbl)] = Qt.gray
-            else:
-                self.obj_colors[('label', lbl)] = Qt.blue
+        yield
         self.qt_model.layoutChanged.emit()
 
 
@@ -226,9 +229,19 @@ def get_main():
     setup_treeview(wf.tvMainView, pkg_model.get_main_index(pkg_model.sources_root))
 
     setup_treeview(wf.tvSources, pkg_model.get_main_index(pkg_model.sources_root))
+
+    def set_main_workload(index):
+        item = index.internalPointer()
+        if isinstance(item, Workload):
+            wf.tvMainView.setRootIndex(index)
+            pkg_model.set_active_index(index)
+        elif isinstance(item, Label):
+            pkg_model.set_active_index(index)
+    wf.tvSources.doubleClicked.connect(set_main_workload)
+
     setup_treeview(wf.tvLabels, pkg_model.get_main_index(pkg_model.labels_root))
 
-    wf.tvLabels.doubleClicked.connect(pkg_model.set_active_label_index)
+    wf.tvLabels.doubleClicked.connect(pkg_model.set_active_index)
 
     act = WidgetFinder(window, QAction)
     act.actExpandReqs.setIcon(get_icon('puzzle-piece'))
