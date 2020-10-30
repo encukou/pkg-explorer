@@ -1,13 +1,26 @@
 import sys
-from PySide2.QtCore import QAbstractItemModel, Qt, QModelIndex, QTimer
+from functools import cached_property
+
+from PySide2.QtCore import QAbstractItemModel, Qt, QModelIndex, QTimer, QSize
 from PySide2.QtWidgets import QApplication, QWidget
 from PySide2.QtUiTools import QUiLoader
+from PySide2.QtGui import QIcon
 
 import dnf
 
 cachedir = '_dnf_cache'
 releasever = '33'
 the_arch = 'x86_64'
+
+_icons = {}
+def get_icon(name):
+    try:
+        return _icons[name]
+    except KeyError:
+        icon = QIcon(f'icons-fontawesome/{name}.svg')
+        _icons[name] = icon
+        return icon
+
 
 class Progress(dnf.callback.DownloadProgress):
     def start(self, total_files, total_size, total_drpms=0):
@@ -22,6 +35,8 @@ class ModelItem:
     label = '???'
     row_count = 0
     col_count = 1
+    icon_name = None
+    replacement = None
 
     def __init__(self, *, model=None, parent=None):
         if parent:
@@ -34,9 +49,20 @@ class ModelItem:
     def data(self, role=Qt.DisplayRole):
         if role == Qt.DisplayRole:
             return self.label
+        elif role == Qt.DecorationRole:
+            if self.icon_name:
+                return get_icon(self.icon_name)
+        elif role == Qt.SizeHintRole:
+            return QSize(18, 18)
         return None
 
-    def child(self, row, column):
+    def get_replacement(self):
+        replacement = self
+        if parent := replacement.replacement:
+            replacement = parent
+        return replacement
+
+    def get_child(self, row, column):
         return None
 
 
@@ -49,13 +75,91 @@ class QuerySet(ModelItem):
     def row_count(self):
         return len(self.queries)
 
-    def child(self, row, column):
+    def get_child(self, row, column):
         return self.queries[row]
 
 class Query(ModelItem):
-    def __init__(self, text, *, parent):
+    icon_name = 'list-alt'
+    _packages = None
+
+    def __init__(self, name, arch=None, *, parent):
         super().__init__(parent=parent)
-        self.label = text
+        self.label = name
+
+        q = self.model.base.sack.query()
+        q = q.available()
+        q = q.filter(name=name)
+        if arch:
+            q = q.filter(arch=arch)
+        self._query = q
+
+    @cached_property
+    def packages(self):
+        if self._packages == None:
+            self._packages = [Package(p, parent=self) for p in self._query]
+        return self._packages
+
+    @property
+    def replacement(self):
+        if len(self.packages) == 1:
+            return self.packages[0]
+
+    @property
+    def row_count(self):
+        return len(self.packages)
+
+    def get_child(self, row, column):
+        return self.packages[row]
+
+
+class Package(ModelItem):
+    icon_name = 'archive'
+
+    def __init__(self, pkg, *, parent):
+        super().__init__(parent=parent)
+        self.pkg = pkg
+        self.label = pkg.name
+        if not self.pkg.source_name:
+            self.icon_name = 'wrench'
+
+    @cached_property
+    def source(self):
+        if self.pkg.source_name:
+            return Query(self.pkg.source_name, arch='src', parent=self)
+
+    @cached_property
+    def reqs(self):
+        reqs = [Requirement(r, parent=self) for r in self.pkg.requires]
+        reqs += [Recommendation(r, parent=self) for r in self.pkg.recommends]
+        reqs += [Recommendation(r, parent=self) for r in self.pkg.suggests]
+        return reqs
+
+    @property
+    def row_count(self):
+        count = len(self.reqs)
+        if self.source:
+            count += 1
+        return count
+
+    def get_child(self, row, column):
+        if self.source:
+            if row == 0:
+                return self.source
+            row -= 1
+        return self.reqs[row]
+
+
+class Requirement(ModelItem):
+    icon_name = 'puzzle-piece'
+
+    def __init__(self, reldep, *, parent):
+        super().__init__(parent=parent)
+        self.label = str(reldep)
+
+class Recommendation(Requirement):
+    icon_name = 'plus'
+
+
 
 class PkgModel:
     def __init__(self):
@@ -104,7 +208,8 @@ class PkgQtModel(QAbstractItemModel):
         if not index.isValid():
             return None
         if self.checkIndex(index, QAbstractItemModel.CheckIndexOption.IndexIsValid):
-            return index.internalPointer().data(role)
+            item = index.internalPointer().get_replacement()
+            return item.data(role)
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole:
@@ -114,22 +219,25 @@ class PkgQtModel(QAbstractItemModel):
         if not parent.isValid():
             return 1
         if self.checkIndex(parent, QAbstractItemModel.CheckIndexOption.IndexIsValid):
-            return parent.internalPointer().row_count
+            item = parent.internalPointer().get_replacement()
+            return item.row_count
 
     def columnCount(self, parent):
         if not parent.isValid():
             return 1
         if self.checkIndex(parent):
-            return parent.internalPointer().col_count
+            item = parent.internalPointer().get_replacement()
+            return item.col_count
 
     def index(self, row, column, parent):
         if not parent.isValid():
             return QModelIndex()
         if self.checkIndex(parent):
-            p = parent.internalPointer()
-            if p.row_count <= row or p.col_count <= column:
+            item = parent.internalPointer().get_replacement()
+            if item.row_count <= row or item.col_count <= column:
                 return QModelIndex()
-            return self.createIndex(row, column, p.child(row, column))
+            child = item.get_child(row, column)
+            return self.createIndex(row, column, child)
 
     def parent(self, index):
         if not index.isValid():
@@ -138,7 +246,10 @@ class PkgQtModel(QAbstractItemModel):
                 index,
                 QAbstractItemModel.CheckIndexOption.DoNotUseParent
             ):
-            parent = index.internalPointer().parent
+            item = index.internalPointer().get_replacement()
+            parent = item.parent
+            while parent and parent.get_replacement() == item:
+                parent = parent.parent
             if parent is None:
                 return QModelIndex()
             return self.createIndex(0, 0, parent)
@@ -167,11 +278,11 @@ def get_main_window():
 
     pkg_model = PkgModel()
     ri = pkg_model.get_queryset_index()
-    pkg_model.add_query(ri, 'scipy')
+    pkg_model.add_query(ri, 'python3-scipy')
 
     wf.tvMainView.setModel(pkg_model.qt_model)
     wf.tvMainView.setRootIndex(ri)
-    pkg_model.add_query(ri, 'nose')
+    pkg_model.add_query(ri, 'python3-nose')
 
     return window
 
