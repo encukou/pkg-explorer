@@ -1,0 +1,3 @@
+[submodule "content-resolver-input"]
+	path = content-resolver-input
+	url = https://github.com/minimization/content-resolver-input/

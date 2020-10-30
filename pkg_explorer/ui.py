@@ -1,31 +1,21 @@
 import sys
 import os
-from functools import cached_property
 from contextlib import contextmanager
 import enum
+from pathlib import Path
 
 from PySide2.QtCore import QAbstractItemModel, Qt, QModelIndex, QTimer, QSize
 from PySide2.QtCore import QPoint, QRect
 from PySide2.QtWidgets import QApplication, QWidget, QAction, QStyle
 from PySide2.QtWidgets import QStyledItemDelegate
 from PySide2.QtUiTools import QUiLoader
-from PySide2.QtGui import QIcon, QFontMetrics, QColor, QBrush
+from PySide2.QtGui import QFontMetrics
 
 import dnf
 
-cachedir = '_dnf_cache'
-releasever = 'rawhide'
-the_arch = 'x86_64'
-
-
-_icons = {}
-def get_icon(name):
-    try:
-        return _icons[name]
-    except KeyError:
-        icon = QIcon(f'icons-fontawesome/{name}.svg')
-        _icons[name] = icon
-        return icon
+from .modelitems import QuerySet, Query, Subject, Package
+from .consts import cachedir, releasever, the_arch
+from .util import get_icon
 
 
 class Progress(dnf.callback.DownloadProgress):
@@ -35,177 +25,6 @@ class Progress(dnf.callback.DownloadProgress):
         print('progress...', payload, done)
     def end(self, payload, status, msg):
         print('end...', payload, status, msg)
-
-
-class ModelItem:
-    label = '???'
-    col_count = 1
-    icon_name = None
-    replacement = None
-    children = ()
-
-    def __init__(self, *, model=None, parent=None):
-        if parent:
-            self.parent = parent
-            self.model = parent.model
-        else:
-            self.model = model
-            self.parent = None
-
-    def data(self, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole:
-            return self.label
-        elif role == Qt.DecorationRole:
-            if self.icon_name:
-                return get_icon(self.icon_name)
-        elif role == Qt.ForegroundRole:
-            if color := self.model.package_colors.get(self):
-                return QBrush(QColor(color))
-        return None
-
-    def get_replacement(self):
-        replacement = self
-        if parent := replacement.replacement:
-            replacement = parent
-        return replacement
-
-    def get_child(self, row, column):
-        return self.children[row]
-
-    @property
-    def row_count(self):
-        return len(self.children)
-
-
-class QuerySet(ModelItem):
-    def __init__(self, *, model):
-        super().__init__(model=model)
-        self.queries = []
-        self.children = self.queries
-
-
-class Query(ModelItem):
-    icon_name = 'list-alt'
-
-    def __init__(self, name=None, arch=[the_arch, 'noarch'], *, parent, **kwargs):
-        super().__init__(parent=parent)
-        self.label = name
-
-        q = self.model.base.sack.query()
-        q = q.available()
-        if name:
-            q = q.filter(name=name)
-        if kwargs:
-            q = q.filter(**kwargs)
-        if arch:
-            q = q.filter(arch=arch)
-        self._query = q
-
-    @cached_property
-    def children(self):
-        return [Package(p, parent=self) for p in self._query]
-
-    @property
-    def replacement(self):
-        if len(self.children) == 1:
-            return self.children[0]
-
-
-class Subject(ModelItem):
-    icon_name = 'list-alt'
-
-    def __init__(self, text, *, parent):
-        super().__init__(parent=parent)
-        self.label = text
-        self.subject = dnf.subject.Subject(text)
-
-    @cached_property
-    def children(self):
-        q = self.subject.get_best_query(self.model.base.sack)
-        return [
-            Package(p, parent=self)
-            for p in q
-            if p.arch in (the_arch, 'noarch')
-        ]
-
-    @property
-    def replacement(self):
-        if len(self.children) >= 1:
-            return self.children[0]
-
-
-class Package(ModelItem):
-    icon_name = 'archive'
-
-    def __init__(self, pkg, *, parent):
-        super().__init__(parent=parent)
-        self.pkg = pkg
-        self.label = pkg.name
-        if not self.pkg.source_name:
-            self.icon_name = 'wrench'
-
-    @cached_property
-    def source(self):
-        if self.pkg.source_name:
-            return Query(self.pkg.source_name, arch='src', parent=self)
-
-    @cached_property
-    def reqs(self):
-        reqs = sorted((Requirement(r, parent=self) for r in self.pkg.requires), key=lambda r: r.label)
-        reqs += [Recommendation(r, parent=self) for r in self.pkg.recommends]
-        reqs += [Recommendation(r, parent=self) for r in self.pkg.suggests]
-        return reqs
-
-    @cached_property
-    def collapsed_reqs(self):
-        collapsed = []
-        rest = []
-        collapsed_pkgs = set()
-        for req in self.reqs:
-            if len(req.pkgs) == 1:
-                [pkg] = req.pkgs
-                if pkg.pkg not in collapsed_pkgs:
-                    collapsed.append(Package(pkg.pkg, parent=self))
-                    collapsed_pkgs.add(pkg.pkg)
-            else:
-                rest.append(req)
-        return sorted(collapsed, key=lambda r: r.label) + rest
-
-    @property
-    def children(self):
-        result = []
-        if self.source:
-            result.append(self.source)
-        if self.model.collapse_reqs:
-            result.extend(self.collapsed_reqs)
-        else:
-            result.extend(self.reqs)
-        return result
-
-
-class Requirement(ModelItem):
-    icon_name = 'puzzle-piece'
-
-    def __init__(self, reldep, *, parent):
-        super().__init__(parent=parent)
-        self.label = str(reldep)
-        self.reldep = reldep
-
-    @cached_property
-    def pkgs(self):
-        result = []
-        q = self.model.base.sack.query()
-        q = q.available()
-        q = q.filter(provides=self.reldep, arch=[the_arch, 'noarch'])
-        return [Package(pkg, parent=self) for pkg in q]
-
-    @property
-    def children(self):
-        return self.pkgs
-
-
-class Recommendation(Requirement):
-    icon_name = 'plus'
 
 
 class CoroDriver:
@@ -233,7 +52,7 @@ def colorize(model):
     model.package_colors = {}
 
     def color(item, new_color):
-        if item in model.package_colors:
+        if item.underlying_object in model.package_colors:
             return
         yield model._colorize(item, new_color)
         if not isinstance(item, Package):
@@ -242,9 +61,6 @@ def colorize(model):
 
     yield from color(unwant, 'red')
     yield from color(provide, 'blue')
-    for i in range(10):
-        print(i)
-        yield
 
 
 class PkgModel:
@@ -318,7 +134,7 @@ class PkgModel:
 
     def _colorize(self, item, new_color):
         self.qt_model.layoutAboutToBeChanged.emit()
-        self.package_colors[item] = new_color
+        self.package_colors[item.underlying_object] = new_color
         self.qt_model.layoutChanged.emit()
 
 
@@ -396,7 +212,7 @@ class WidgetFinder:
 
 
 def get_main():
-    window = QUiLoader().load('main.ui')
+    window = QUiLoader().load(str(Path(__file__).parent / 'main.ui'))
     wf = WidgetFinder(window)
 
     pkg_model = PkgModel()
@@ -436,7 +252,7 @@ def get_main():
 
     return window, pkg_model
 
-if __name__ == '__main__':
+def main():
     print(os.getpid())
     app = QApplication(sys.argv)
     window, model = get_main()
