@@ -60,13 +60,18 @@ class ModelItem:
             return self.label
         elif role == Qt.DecorationRole:
             if self.icon_name:
-                return get_icon(self.icon_name)
+                return get_icon(self.icon_name, self.color)
         elif role == Qt.ForegroundRole:
-            if color := self.model.package_colors.get(self.underlying_object):
-                return QBrush(QColor(color))
+            if color := self.color:
+                return QBrush(color)
         elif role == AutoexpandRole:
             return self.autoexpand
         return None
+
+    @property
+    def color(self):
+        if color := self.model.obj_colors.get(self.underlying_object):
+            return color
 
     def get_child(self, row, column):
         return self.children[row]

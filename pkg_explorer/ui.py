@@ -72,7 +72,7 @@ class PkgModel:
 
         self.base = base
 
-        self.package_colors = {}
+        self.obj_colors = {}
 
         self._color_driver = None
         self._recolor()
@@ -114,8 +114,17 @@ class PkgModel:
         self._color_driver = CoroDriver(colorize(self))
 
     def _colorize(self, item, new_color):
-        self.qt_model.layoutAboutToBeChanged.emit()
         self.package_colors[item.underlying_object] = new_color
+
+    def set_active_label_index(self, index):
+        item = index.internalPointer()
+        self.qt_model.layoutAboutToBeChanged.emit()
+        self.obj_colors.clear()
+        for lbl in self.labels:
+            if item.label != lbl:
+                self.obj_colors[('label', lbl)] = Qt.gray
+            else:
+                self.obj_colors[('label', lbl)] = Qt.blue
         self.qt_model.layoutChanged.emit()
 
 
@@ -218,6 +227,8 @@ def get_main():
 
     setup_treeview(wf.tvSources, pkg_model.get_main_index(pkg_model.sources_root))
     setup_treeview(wf.tvLabels, pkg_model.get_main_index(pkg_model.labels_root))
+
+    wf.tvLabels.doubleClicked.connect(pkg_model.set_active_label_index)
 
     act = WidgetFinder(window, QAction)
     act.actExpandReqs.setIcon(get_icon('puzzle-piece'))
