@@ -50,6 +50,7 @@ class CoroDriver:
 class PkgModel:
     def __init__(self, root_path):
         self.collapse_reqs = True
+        self.collapse_provides = True
 
         self.qt_model = PkgQtModel(self)
 
@@ -96,6 +97,10 @@ class PkgModel:
     def set_expand_reqs(self, value):
         with self.changing_layout():
             self.collapse_reqs = not value
+
+    def set_expand_provides(self, value):
+        with self.changing_layout():
+            self.collapse_provides = not value
 
     def ensure_label(self, lbl):
         if lbl not in self.labels:
@@ -244,8 +249,12 @@ def get_main():
     wf.tvLabels.doubleClicked.connect(pkg_model.set_active_index)
 
     act = WidgetFinder(window, QAction)
+
     act.actExpandReqs.setIcon(get_icon('puzzle-piece'))
     act.actExpandReqs.toggled.connect(pkg_model.set_expand_reqs)
+
+    act.actExpandProvides.setIcon(get_icon('hand-holding'))
+    act.actExpandProvides.toggled.connect(pkg_model.set_expand_provides)
 
     return window, pkg_model
 

@@ -48,6 +48,6 @@ def colorize_subject(subj, color):
     model._colorize(subj, color)
     for item in subj.children:
         model._colorize(item, color)
-        if isinstance(item, Package):
+        if isinstance(item, Package) and color == Qt.darkGreen:
             for src in item.sources:
                 model._colorize(src, color)

@@ -189,10 +189,12 @@ class Package(ModelItem):
     icon_name = 'box-open'
     src_icon_name = 'wrench'
 
-    def __init__(self, pkg, *, parent):
+    def __init__(self, pkg, icon_name=None, label_prefix='', *, parent):
         self.pkg = pkg
-        self.label = pkg.name
-        if not self.pkg.source_name:
+        self.label = label_prefix + pkg.name
+        if icon_name:
+            self.icon_name = icon_name
+        elif not self.pkg.source_name:
             self.icon_name = self.src_icon_name
         super().__init__(self.pkg, parent=parent)
 
@@ -210,6 +212,7 @@ class Package(ModelItem):
         if self.pkg.source_name:
             q = self.model.base.sack.query().filter(name=self.pkg.source_name, arch='src')
             return [type(self)(pkg, parent=self) for pkg in q]
+        return []
 
     @cached_property
     def reqs(self):
@@ -217,6 +220,20 @@ class Package(ModelItem):
         reqs += [Recommendation(r, parent=self) for r in self.pkg.recommends]
         reqs += [Recommendation(r, parent=self) for r in self.pkg.suggests]
         return reqs
+
+    @cached_property
+    def provides(self):
+        if self.pkg.arch == 'src':
+            result = []
+            for reldep in self.pkg.provides:
+                q = self.model.base.sack.query().filter(provides=reldep, arch=(the_arch, 'noarch'))
+                result.extend(q)
+            return sorted((
+                Package(r, icon_name='archive', label_prefix='→ ', parent=self)
+                for r in result
+            ), key=lambda r: r.label)
+        else:
+            return sorted((Provide(r, parent=self) for r in self.pkg.provides), key=lambda r: r.label)
 
     @cached_property
     def collapsed_reqs(self):
@@ -233,9 +250,24 @@ class Package(ModelItem):
                 rest.append(req)
         return sorted(collapsed, key=lambda r: r.label) + rest
 
+    @cached_property
+    def collapsed_provides(self):
+        if self.pkg.arch == 'src':
+            return self.provides
+        if self.provides:
+            pkgs = sorted(set(
+                p.pkg
+                for prov in self.provides
+                for p in prov.pkgs
+                if p.pkg != self.pkg
+            ), key=lambda p: p.name)
+            if pkgs:
+                return [CollapsedProvides(pkgs, parent=self)]
+        return []
+
     @property
     def has_children(self):
-        return self.sources or self.reqs
+        return self.sources or self.reqs or self.provides
 
     @property
     def children(self):
@@ -246,27 +278,25 @@ class Package(ModelItem):
             result.extend(self.collapsed_reqs)
         else:
             result.extend(self.reqs)
+        if self.model.collapse_provides:
+            result.extend(self.collapsed_provides)
+        else:
+            result.extend(self.provides)
         return result
 
-class UnwantedPackage(Package):
-    icon_name = 'archive'
-    src_icon_name = 'screwdriver'
+
+class CollapsedProvides(ModelItem):
+    icon_name = 'hand-holding-medical'
+    label = 'Dependent packages'
+
+    def __init__(self, pkgs, parent):
+        super().__init__(self, parent=parent)
+        self.pkgs = pkgs
+        self.label = f'Dependent packages ({len(pkgs)})'
 
     @cached_property
-    def sources(self):
-        return []
-
-    @cached_property
-    def reqs(self):
-        if self.pkg.arch == 'src':
-            result = []
-            for reldep in self.pkg.provides:
-                q = self.model.base.sack.query().filter(provides=reldep)
-                result.extend(q)
-            return sorted((UnwantedPackage(r, parent=self) for r in result), key=lambda r: r.label)
-        else:
-            return sorted((Provide(r, parent=self) for r in self.pkg.provides), key=lambda r: r.label)
-
+    def children(self):
+        return [Package(p, parent=self) for p in self.pkgs]
 
 class Subject(ModelItem):
     icon_name = 'list-alt'
@@ -291,7 +321,6 @@ class Subject(ModelItem):
 
 class UnwantedSubject(Subject):
     icon_name = 'window-close'
-    _pkg_class = UnwantedPackage
 
 
 class Requirement(ModelItem):
@@ -321,12 +350,11 @@ class Recommendation(Requirement):
 
 class Provide(Requirement):
     icon_name = 'hand-holding'
-    _pkg_class = UnwantedPackage
 
     @cached_property
     def pkgs(self):
         result = []
         q = self.model.base.sack.query()
         q = q.available()
-        q = q.filter(requires=self.reldep, arch=[the_arch, 'noarch'])
-        return [UnwantedPackage(pkg, parent=self) for pkg in q]
+        q = q.filter(requires=self.reldep, arch=[the_arch, 'noarch', 'src'])
+        return [Package(pkg, parent=self) for pkg in q]

@@ -52,6 +52,7 @@
     <bool>false</bool>
    </attribute>
    <addaction name="actExpandReqs"/>
+   <addaction name="actExpandProvides"/>
   </widget>
   <widget class="QDockWidget" name="dockWidget_2">
    <property name="windowTitle">
@@ -106,6 +107,14 @@
    </property>
    <property name="text">
     <string>Expand Requirements</string>
+   </property>
+  </action>
+  <action name="actExpandProvides">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Expand Provides</string>
    </property>
   </action>
  </widget>
