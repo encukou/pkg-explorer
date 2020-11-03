@@ -1,53 +1,68 @@
+import enum
+
 from PySide2.QtCore import Qt
 
 from .modelitems import Label, Workload, UnwantedSubject, Subject, Package
+
+class Color(enum.Enum):
+    RED = Qt.red
+    GREEN = Qt.darkGreen
+    DARK_BLUE = Qt.darkBlue
+    BLUE = Qt.blue
+    GRAY = Qt.gray
+
+    @property
+    def title(self):
+        return self.name.capitalize().replace('_', ' ')
+
 
 def is_active(model, item, cls):
     return isinstance(item, cls) and item.underlying_object == model.active_indexes.get(cls)
 
 def colorize(model):
-    with model.changing_layout():
-        for item in model.labels_root.children:
-            if is_active(model, item, Label):
-                model._colorize(item, Qt.blue)
-            else:
-                model._colorize(item, Qt.gray)
-    yield
-    active_workload = None
-    for item in model.sources_root.children:
-        if is_active(model, item, Workload):
-            active_workload = item
-            colorize_workload(item, Qt.blue)
+    for item in model.labels_root.children:
+        if is_active(model, item, Label):
+            yield item, Color.BLUE
         else:
-            with model.changing_layout():
-                colorize_workload(item)
-            yield
+            yield item, Color.GRAY
+    active_workload = None
+    for item in sorted(
+            model.sources_root.children,
+            key=lambda wl: (
+                wl.color != Color.BLUE,
+                not getattr(wl, 'unwanted_packages', None),
+                len(wl.children) // 100,
+            ),
+        ):
+        if is_active(model, item, Workload) or item.color == Color.BLUE:
+            yield from colorize_workload(item, Color.BLUE)
+        else:
+            yield from colorize_workload(item)
 
 
 def colorize_workload(wl, color=None):
     model = wl.model
-    for item in wl.children:
+    for item in wl.labels:
         if is_active(model, item, Label):
             break
     else:
-        model._colorize(wl, Qt.gray)
+        yield wl, Color.GRAY
         return
-    model._colorize(wl, color or Qt.darkBlue)
+    yield wl, color or Color.DARK_BLUE
     for item in wl.children:
         if isinstance(item, UnwantedSubject):
-            model._colorize(item, Qt.red)
+            yield item, Color.RED
         if isinstance(item, Subject):
             if isinstance(item, UnwantedSubject):
-                color = Qt.red
+                color = Color.RED
             else:
-                color = color or Qt.darkGreen
-            colorize_subject(item, color)
+                color = color or Color.GREEN
+            yield from colorize_subject(item, color)
 
 def colorize_subject(subj, color):
-    model = subj.model
-    model._colorize(subj, color)
+    yield subj, color
     for item in subj.children:
-        model._colorize(item, color)
-        if isinstance(item, Package) and color == Qt.darkGreen:
+        yield item, color
+        if isinstance(item, Package) and color == Color.GREEN:
             for src in item.sources:
-                model._colorize(src, color)
+                yield src, item.color or color

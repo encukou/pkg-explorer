@@ -6,16 +6,17 @@ from pathlib import Path
 
 from PySide2.QtCore import QAbstractItemModel, Qt, QModelIndex, QTimer, QSize
 from PySide2.QtCore import QPoint, QRect
-from PySide2.QtWidgets import QApplication, QWidget, QAction, QStyle
+from PySide2.QtWidgets import QApplication, QWidget, QAction, QStyle, QMenu
 from PySide2.QtWidgets import QStyledItemDelegate
 from PySide2.QtUiTools import QUiLoader
-from PySide2.QtGui import QFontMetrics
+from PySide2.QtGui import QFontMetrics, QCursor
 
 import dnf
 
-from .modelitems import Workload, ResolverInput, Labels, Label, AutoexpandRole
+from .modelitems import Workload, ResolverInput, Labels, Label
+from .modelitems import AutoexpandRole, ColorRole
 from .consts import cachedir, releasever, the_arch
-from .coloring import colorize
+from .coloring import colorize, Color
 from .util import get_icon
 
 
@@ -29,19 +30,22 @@ class Progress(dnf.callback.DownloadProgress):
 
 
 class CoroDriver:
-    def __init__(self, coro):
+    def __init__(self, coro, model):
         self.active = True
         self.coro = coro
+        self.model = model
         self.drive()
 
     def drive(self):
         if self.active:
             try:
-                next(self.coro)
+                with self.model.changing_layout():
+                    for i in range(50):
+                        self.model._colorize(*next(self.coro))
             except StopIteration:
                 pass
             else:
-                QTimer.singleShot(10, self.drive)
+                QTimer.singleShot(1, self.drive)
                 return
         self.coro.close()
         self.active = False
@@ -112,21 +116,17 @@ class PkgModel:
     def _recolor(self):
         if self._color_driver:
             self._color_driver.active = False
-        self._color_driver = CoroDriver(colorize(self))
+        self._color_driver = CoroDriver(colorize(self), self)
 
     def _colorize(self, item, new_color):
-        self.obj_colors[item.underlying_object] = new_color
+        if item.underlying_object not in self.obj_colors:
+            self.obj_colors[item.underlying_object] = new_color
 
     def set_active_index(self, index):
         item = index.internalPointer()
         self.active_indexes[type(item)] = item.underlying_object
         with self.changing_layout():
             self.obj_colors.clear()
-        #for lbl in self.labels:
-        #    if item.label != lbl:
-        #        self.obj_colors[('label', lbl)] = Qt.gray
-        #    else:
-        #        self.obj_colors[('label', lbl)] = Qt.blue
         self._recolor()
 
     @contextmanager
@@ -199,7 +199,7 @@ class PkgQtModel(QAbstractItemModel):
 
 class ItemDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):
-        return QSize(20, QFontMetrics(option.font).lineSpacing())
+        return QSize(2000, QFontMetrics(option.font).lineSpacing())
 
 
 class WidgetFinder:
@@ -215,16 +215,37 @@ class WidgetFinder:
 
 
 def setup_treeview(view, index):
-    view.setModel(index.model())
+    model = index.model()
+    view.setModel(model)
     view.setRootIndex(index)
     view.setItemDelegate(ItemDelegate())
 
     def expand_more(index):
-        model = index.model()
         if model.data(index, AutoexpandRole) and model.rowCount(index) == 1:
             view.expand(model.index(0, 0, index))
 
     view.expanded.connect(expand_more)
+
+    def pressed(index):
+        if QApplication.mouseButtons() & Qt.RightButton:
+            menu = QMenu()
+            actions = []
+            for color in Color:
+                print(color)
+                act = QAction(get_icon('paintbrush', color.value), color.title, menu)
+                act.setCheckable(True)
+                if model.data(index, ColorRole) == color:
+                    act.setChecked(True)
+                menu.addAction(act)
+            act = QAction(get_icon('eraser'), 'No color', menu)
+            act.setCheckable(True)
+            if model.data(index, ColorRole) == None:
+                act.setChecked(True)
+            menu.addAction(act)
+            act = menu.exec_(QCursor.pos())
+            print(act)
+
+    view.pressed.connect(pressed)
 
 def get_main():
     window = QUiLoader().load(str(Path(__file__).parent / 'main.ui'))

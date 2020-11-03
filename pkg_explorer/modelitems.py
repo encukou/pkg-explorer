@@ -13,6 +13,7 @@ from .consts import the_arch, yaml_cacheir
 from .util import get_icon
 
 AutoexpandRole = Qt.UserRole + 1
+ColorRole = Qt.UserRole + 2
 
 def read_yaml(path):
     stat = path.stat()
@@ -64,10 +65,15 @@ class ModelItem:
             return self.extended_label
         elif role == Qt.DecorationRole:
             if self.icon_name:
-                return get_icon(self.icon_name, self.color)
+                if self.color:
+                    return get_icon(self.icon_name, self.color.value)
+                else:
+                    return get_icon(self.icon_name)
         elif role == Qt.ForegroundRole:
             if color := self.color:
-                return QBrush(color)
+                return QBrush(color.value)
+        elif role == ColorRole:
+            return self.color
         elif role == AutoexpandRole:
             return self.autoexpand
         return None
