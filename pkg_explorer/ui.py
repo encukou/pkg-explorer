@@ -139,7 +139,27 @@ class PkgModel:
     def changing_layout(self):
         self.qt_model.layoutAboutToBeChanged.emit()
         yield
+        for index in self.qt_model.persistentIndexList():
+            if replaced := self._replaced_index(index):
+                self.qt_model.changePersistentIndex(index, replaced)
         self.qt_model.layoutChanged.emit()
+
+    def _replaced_index(self, index):
+        item = index.internalPointer()
+        parent = index.parent()
+        if not parent.isValid():
+            # this is a root
+            return
+        p_item = parent.internalPointer()
+        p_children = p_item.children
+        if len(p_children) > index.row() and p_children[index.row()] == item:
+            # Same position
+            return
+        for i, child in enumerate(p_children):
+            if child == item:
+                return self.qt_model.index(i, 0, parent)
+        # no longer exists
+        return QModelIndex()
 
     def set_color(self, index, color):
         item = index.internalPointer()
