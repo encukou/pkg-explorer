@@ -3,6 +3,7 @@ import os
 from contextlib import contextmanager
 import enum
 from pathlib import Path
+from functools import partial
 
 from PySide2.QtCore import QAbstractItemModel, Qt, QModelIndex, QTimer, QSize
 from PySide2.QtCore import QPoint, QRect
@@ -13,7 +14,7 @@ from PySide2.QtGui import QFontMetrics, QCursor
 
 import dnf
 
-from .modelitems import Workload, ResolverInput, Labels, Label
+from .modelitems import Workload, ResolverInput, Labels, Label, Mods, Mod
 from .modelitems import AutoexpandRole, ColorRole
 from .consts import cachedir, releasever, the_arch
 from .coloring import colorize, Color
@@ -82,9 +83,11 @@ class PkgModel:
 
         self.labels_root = Labels(model=self)
         self.sources_root = ResolverInput(root_path, model=self)
+        self.mods_root = Mods(model=self)
         self.roots = [
             self.sources_root,
             self.labels_root,
+            self.mods_root,
         ]
 
         self.active_indexes = {}
@@ -135,6 +138,19 @@ class PkgModel:
         yield
         self.qt_model.layoutChanged.emit()
 
+    def set_color(self, index, color):
+        item = index.internalPointer()
+        key = item.key
+        if key != None:
+            mods = self.mods_root
+            mod = mods.mods.get(key)
+            with self.changing_layout():
+                if mod:
+                    mod.color = color
+                else:
+                    mods.mods[key] = Mod(key, color, parent=mods)
+        self._recolor()
+
 
 class PkgQtModel(QAbstractItemModel):
     def __init__(self, model):
@@ -145,9 +161,10 @@ class PkgQtModel(QAbstractItemModel):
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable
 
     def data(self, index, role=Qt.DisplayRole):
+        if role == Qt.SizeHintRole:
+            return QSize(30, 30)
         if not index.isValid():
             return None
-        #self.checkIndex(index)
         item = index.internalPointer()
         return item.data(role)
 
@@ -158,21 +175,18 @@ class PkgQtModel(QAbstractItemModel):
     def rowCount(self, parent):
         if not parent.isValid():
             return 1
-        #self.checkIndex(parent)
         item = parent.internalPointer()
         return item.row_count
 
     def columnCount(self, parent):
         if not parent.isValid():
             return 1
-        #self.checkIndex(parent)
         item = parent.internalPointer()
         return item.col_count
 
     def index(self, row, column, parent):
         if not parent.isValid():
             return QModelIndex()
-        #self.checkIndex(parent)
         item = parent.internalPointer()
         if item.row_count <= row or item.col_count <= column:
             return QModelIndex()
@@ -182,14 +196,12 @@ class PkgQtModel(QAbstractItemModel):
     def hasChildren(self, parent):
         if not parent.isValid():
             return QModelIndex()
-        #self.checkIndex(parent)
         item = parent.internalPointer()
         return bool(item.has_children)
 
     def parent(self, index):
         if not index.isValid():
             return QModelIndex()
-        #self.checkIndex(index, QAbstractItemModel.CheckIndexOption.DoNotUseParent)
         item = index.internalPointer()
         parent = item.parent
         if parent is None:
@@ -199,7 +211,12 @@ class PkgQtModel(QAbstractItemModel):
 
 class ItemDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):
-        return QSize(2000, QFontMetrics(option.font).lineSpacing())
+        size = super().sizeHint(option, index)
+        size.setHeight(QFontMetrics(option.font).lineSpacing())
+        return size
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
 
 
 class WidgetFinder:
@@ -214,20 +231,17 @@ class WidgetFinder:
         return widget
 
 
-def setup_treeview(view, index):
+def setup_view(view, index):
     model = index.model()
     view.setModel(model)
     view.setRootIndex(index)
     view.setItemDelegate(ItemDelegate())
 
-    def expand_more(index):
-        if model.data(index, AutoexpandRole) and model.rowCount(index) == 1:
-            view.expand(model.index(0, 0, index))
-
-    view.expanded.connect(expand_more)
-
     def pressed(index):
+        item = index.internalPointer()
         if QApplication.mouseButtons() & Qt.RightButton:
+            if item.key is None:
+                return
             menu = QMenu()
             actions = []
             for color in Color:
@@ -237,15 +251,29 @@ def setup_treeview(view, index):
                 if model.data(index, ColorRole) == color:
                     act.setChecked(True)
                 menu.addAction(act)
+                act.triggered.connect(partial(model._mod.set_color, index, color))
             act = QAction(get_icon('eraser'), 'No color', menu)
             act.setCheckable(True)
             if model.data(index, ColorRole) == None:
                 act.setChecked(True)
             menu.addAction(act)
-            act = menu.exec_(QCursor.pos())
-            print(act)
+            act.triggered.connect(partial(model._mod.set_color, index, None))
+            menu.exec_(QCursor.pos())
 
     view.pressed.connect(pressed)
+    view.clicked.connect(print)
+
+def setup_treeview(view, index):
+    model = index.model()
+    setup_view(view, index)
+
+    def expand_more(index):
+        if model.data(index, AutoexpandRole) and model.rowCount(index) == 1:
+            view.expand(model.index(0, 0, index))
+
+    view.expanded.connect(expand_more)
+
+    view.header().resizeSection(0, 100);
 
 def get_main():
     window = QUiLoader().load(str(Path(__file__).parent / 'main.ui'))
@@ -253,8 +281,9 @@ def get_main():
 
     pkg_model = PkgModel(Path('content-resolver-input/configs'))
     setup_treeview(wf.tvMainView, pkg_model.get_main_index(pkg_model.sources_root))
-
     setup_treeview(wf.tvSources, pkg_model.get_main_index(pkg_model.sources_root))
+    setup_treeview(wf.tvLabels, pkg_model.get_main_index(pkg_model.labels_root))
+    setup_treeview(wf.tvMods, pkg_model.get_main_index(pkg_model.mods_root))
 
     def set_main_workload(index):
         item = index.internalPointer()
@@ -265,7 +294,6 @@ def get_main():
             pkg_model.set_active_index(index)
     wf.tvSources.doubleClicked.connect(set_main_workload)
 
-    setup_treeview(wf.tvLabels, pkg_model.get_main_index(pkg_model.labels_root))
 
     wf.tvLabels.doubleClicked.connect(pkg_model.set_active_index)
 
@@ -280,7 +308,7 @@ def get_main():
     return window, pkg_model
 
 def main():
-    print(os.getpid())
+    print('pid', os.getpid())
     app = QApplication(sys.argv)
     window, model = get_main()
     window.show()

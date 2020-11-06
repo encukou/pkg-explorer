@@ -46,6 +46,7 @@ class ModelItem:
     icon_name = None
     children = ()
     autoexpand = False
+    key = None
 
     def __init__(self, underlying_object, *, model=None, parent=None):
         if parent:
@@ -80,6 +81,8 @@ class ModelItem:
 
     @property
     def color(self):
+        if mod := self.model.mods_root.mods.get(self.key):
+            return mod.color
         if color := self.model.obj_colors.get(self.underlying_object):
             return color
 
@@ -119,6 +122,7 @@ class Labels(ModelItem):
 class Workload(ModelItem):
     def __init__(self, path, *, parent):
         super().__init__(self, parent=parent)
+        self.key = ('workload', path.name)
         self.path = path
         list(self.labels)
 
@@ -189,6 +193,10 @@ class Label(ModelItem):
         super().__init__(('label', lbl), parent=parent)
         self.label = lbl
         self.model.ensure_label(lbl)
+
+    @property
+    def key(self):
+        return 'label', self.label
 
 
 class Package(ModelItem):
@@ -289,6 +297,9 @@ class Package(ModelItem):
         else:
             result.extend(self.provides)
         return result
+    @property
+    def key(self):
+        return 'label', self.pkg.name
 
 
 class CollapsedProvides(ModelItem):
@@ -312,6 +323,7 @@ class Subject(ModelItem):
     def __init__(self, text, arches=(the_arch, 'noarch'), *, parent):
         self.label = text
         self.subject = dnf.subject.Subject(text)
+        self.key = 'subj', text
         self.arches = arches
         super().__init__(self.subject, parent=parent)
 
@@ -332,10 +344,12 @@ class UnwantedSubject(Subject):
 class Requirement(ModelItem):
     icon_name = 'puzzle-piece'
     autoexpand = True
+    key_category = 'req'
 
     def __init__(self, reldep, *, parent):
         super().__init__(reldep, parent=parent)
         self.label = str(reldep)
+        self.key = self.key_category, str(reldep)
         self.reldep = reldep
 
     @cached_property
@@ -353,9 +367,11 @@ class Requirement(ModelItem):
 
 class Recommendation(Requirement):
     icon_name = 'plus'
+    key_category = 'rec'
 
 class Provide(Requirement):
     icon_name = 'hand-holding'
+    key_category = 'prov'
 
     @cached_property
     def pkgs(self):
@@ -364,3 +380,25 @@ class Provide(Requirement):
         q = q.available()
         q = q.filter(requires=self.reldep, arch=[the_arch, 'noarch', 'src'])
         return [Package(pkg, parent=self) for pkg in q]
+
+
+class Mods(ModelItem):
+    label = 'Modifications'
+
+    def __init__(self, *, model):
+        super().__init__(('mods',),model=model)
+        self.mods = {}
+
+    @property
+    def children(self):
+        return list(self.mods.values())
+
+class Mod(ModelItem):
+    color = None
+    icon_name = 'paintbrush'
+
+    def __init__(self, key, color, *, parent):
+        super().__init__(('mod', key), parent=parent)
+        self.label = ':'.join(key)
+        self.key = key
+        self.color = color

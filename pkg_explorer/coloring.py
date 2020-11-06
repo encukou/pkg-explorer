@@ -43,7 +43,7 @@ def colorize(model):
 def colorize_workload(wl, color=None):
     model = wl.model
     for item in wl.labels:
-        if is_active(model, item, Label):
+        if item.color == Color.BLUE:
             break
     else:
         yield wl, Color.GRAY
