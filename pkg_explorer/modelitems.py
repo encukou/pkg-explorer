@@ -119,6 +119,14 @@ class Labels(ModelItem):
         return self.model._sorted_labels
 
 
+class Workset(ModelItem):
+    label = 'Workset'
+
+    def __init__(self, *, model):
+        super().__init__(self, model=model)
+        self.children = []
+
+
 class Workload(ModelItem):
     def __init__(self, path, *, parent):
         super().__init__(self, parent=parent)

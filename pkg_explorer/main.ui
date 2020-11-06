@@ -56,6 +56,8 @@
    </attribute>
    <addaction name="actExpandReqs"/>
    <addaction name="actExpandProvides"/>
+   <addaction name="separator"/>
+   <addaction name="actAddPkg"/>
   </widget>
   <widget class="QDockWidget" name="dockWidget_2">
    <property name="windowTitle">
@@ -139,6 +141,14 @@
    </property>
    <property name="text">
     <string>Expand Provides</string>
+   </property>
+  </action>
+  <action name="actAddPkg">
+   <property name="text">
+    <string>Add...</string>
+   </property>
+   <property name="toolTip">
+    <string>Add Package</string>
    </property>
   </action>
  </widget>

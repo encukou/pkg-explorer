@@ -8,13 +8,14 @@ from functools import partial
 from PySide2.QtCore import QAbstractItemModel, Qt, QModelIndex, QTimer, QSize
 from PySide2.QtCore import QPoint, QRect
 from PySide2.QtWidgets import QApplication, QWidget, QAction, QStyle, QMenu
-from PySide2.QtWidgets import QStyledItemDelegate
+from PySide2.QtWidgets import QStyledItemDelegate, QInputDialog
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QFontMetrics, QCursor
 
 import dnf
 
 from .modelitems import Workload, ResolverInput, Labels, Label, Mods, Mod
+from .modelitems import Workset, Subject
 from .modelitems import AutoexpandRole, ColorRole
 from .consts import cachedir, releasever, the_arch
 from .coloring import colorize, Color
@@ -84,10 +85,12 @@ class PkgModel:
         self.labels_root = Labels(model=self)
         self.sources_root = ResolverInput(root_path, model=self)
         self.mods_root = Mods(model=self)
+        self.workset_root = Workset(model=self)
         self.roots = [
             self.sources_root,
             self.labels_root,
             self.mods_root,
+            self.workset_root,
         ]
 
         self.active_indexes = {}
@@ -149,6 +152,16 @@ class PkgModel:
                     mod.color = color
                 else:
                     mods.mods[key] = Mod(key, color, parent=mods)
+        self._recolor()
+
+    def add_subject(self, text):
+        with self.changing_layout():
+            ws = self.workset_root
+            item = Subject(text, parent=ws)
+            ws.children.append(item)
+            return self.qt_model.index(
+                len(ws.children) - 1, 0, self.get_main_index(ws),
+            )
         self._recolor()
 
 
@@ -280,20 +293,16 @@ def get_main():
     wf = WidgetFinder(window)
 
     pkg_model = PkgModel(Path('content-resolver-input/configs'))
-    setup_treeview(wf.tvMainView, pkg_model.get_main_index(pkg_model.sources_root))
+    setup_treeview(wf.tvMainView, pkg_model.get_main_index(pkg_model.workset_root))
     setup_treeview(wf.tvSources, pkg_model.get_main_index(pkg_model.sources_root))
     setup_treeview(wf.tvLabels, pkg_model.get_main_index(pkg_model.labels_root))
     setup_treeview(wf.tvMods, pkg_model.get_main_index(pkg_model.mods_root))
 
     def set_main_workload(index):
         item = index.internalPointer()
-        if isinstance(item, Workload):
-            wf.tvMainView.setRootIndex(index)
-            pkg_model.set_active_index(index)
-        elif isinstance(item, Label):
+        if isinstance(item, Label):
             pkg_model.set_active_index(index)
     wf.tvSources.doubleClicked.connect(set_main_workload)
-
 
     wf.tvLabels.doubleClicked.connect(pkg_model.set_active_index)
 
@@ -304,6 +313,20 @@ def get_main():
 
     act.actExpandProvides.setIcon(get_icon('hand-holding'))
     act.actExpandProvides.toggled.connect(pkg_model.set_expand_provides)
+
+    def add_pkg():
+        text, ok = QInputDialog.getText(
+            window, 'Add Subject',
+            'Add subject (package name):',
+        )
+        if ok:
+            index = pkg_model.add_subject(text)
+            wf.tvMainView.expand(index)
+
+    act.actAddPkg.triggered.connect(add_pkg)
+
+    pkg_model.add_subject('python3-dnf')
+    pkg_model.add_subject('libselinux-python3')
 
     return window, pkg_model
 
