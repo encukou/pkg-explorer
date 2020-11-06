@@ -158,8 +158,22 @@ class PkgModel:
         for i, child in enumerate(p_children):
             if child == item:
                 return self.qt_model.index(i, 0, parent)
-        # no longer exists
-        return QModelIndex()
+        # Slow path
+        return self._index_for_item(item)
+
+    def _index_for_item(self, item):
+        if item is None:
+            return QModelIndex()
+        parent = item.parent
+        if parent is None:
+            return self.get_main_index(item)
+        parent_index = self._index_for_item(parent)
+        try:
+            row = parent.children.index(item)
+        except ValueError:
+            # No longer part of model
+            return QModelIndex()
+        return self.qt_model.index(row, 0, parent_index)
 
     def set_color(self, index, color):
         item = index.internalPointer()
@@ -347,6 +361,8 @@ def get_main():
 
     pkg_model.add_subject('python3-dnf')
     pkg_model.add_subject('libselinux-python3')
+    pkg_model.add_subject('python3-pip')
+    pkg_model.add_subject('python3-wheel')
 
     return window, pkg_model
 
