@@ -231,8 +231,8 @@ class Package(ModelItem):
     @cached_property
     def reqs(self):
         reqs = sorted((Requirement(r, parent=self) for r in self.pkg.requires), key=lambda r: r.label)
-        reqs += [Recommendation(r, parent=self) for r in self.pkg.recommends]
-        reqs += [Recommendation(r, parent=self) for r in self.pkg.suggests]
+        reqs += [WeakReq(r, parent=self) for r in self.pkg.recommends]
+        reqs += [WeakReq(r, parent=self) for r in self.pkg.suggests]
         return reqs
 
     @cached_property
@@ -255,7 +255,7 @@ class Package(ModelItem):
         rest = []
         collapsed_pkgs = set()
         for req in self.reqs:
-            if len(req.pkgs) == 1:
+            if len(req.pkgs) == 1 and req.strong:
                 [pkg] = req.pkgs
                 if pkg.pkg not in collapsed_pkgs:
                     collapsed.append(type(self)(pkg.pkg, parent=self))
@@ -345,6 +345,7 @@ class Requirement(ModelItem):
     icon_name = 'puzzle-piece'
     autoexpand = True
     key_category = 'req'
+    strong = True
 
     def __init__(self, reldep, *, parent):
         super().__init__(reldep, parent=parent)
@@ -365,9 +366,10 @@ class Requirement(ModelItem):
         return self.pkgs
 
 
-class Recommendation(Requirement):
+class WeakReq(Requirement):
     icon_name = 'plus'
-    key_category = 'rec'
+    key_category = 'weak'
+    strong = False
 
 class Provide(Requirement):
     icon_name = 'hand-holding'
