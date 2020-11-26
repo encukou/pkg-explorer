@@ -10,6 +10,7 @@ class Color(enum.Enum):
     DARK_BLUE = Qt.darkBlue
     BLUE = Qt.blue
     GRAY = Qt.gray
+    BLACK = Qt.black
 
     @property
     def title(self):

@@ -305,9 +305,10 @@ class Package(ModelItem):
         else:
             result.extend(self.provides)
         return result
+
     @property
     def key(self):
-        return 'label', self.pkg.name
+        return 'pkg', self.pkg.name
 
 
 class CollapsedProvides(ModelItem):
@@ -405,10 +406,16 @@ class Mods(ModelItem):
 
 class Mod(ModelItem):
     color = None
-    icon_name = 'paintbrush'
 
     def __init__(self, key, color, *, parent):
         super().__init__(('mod', key), parent=parent)
         self.label = ':'.join(key)
         self.key = key
         self.color = color
+
+    @property
+    def icon_name(self):
+        if self.color:
+            return 'paintbrush'
+        else:
+            return 'eraser'
