@@ -77,6 +77,8 @@ class ModelItem:
             return self.color
         elif role == AutoexpandRole:
             return self.autoexpand
+        elif role == Qt.SizeHintRole:
+            return QSize(150, 500)
         return None
 
     @property

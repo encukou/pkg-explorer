@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import enum
 from pathlib import Path
 from functools import partial
+import pickle
 
 from PySide2.QtCore import QAbstractItemModel, Qt, QModelIndex, QTimer, QSize
 from PySide2.QtCore import QPoint, QRect
@@ -95,6 +96,28 @@ class PkgModel:
 
         self.active_indexes = {}
 
+        self.init_mods()
+
+    def init_mods(self):
+        with self.changing_layout():
+            with open('mods.txt') as f:
+                mods = self.mods_root
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith('#'):
+                        continue
+                    color, kind, name = line.split(' ', 2)
+                    key = kind, name
+                    if color == 'None':
+                        color = None
+                    else:
+                        color = Color[color]
+                    mods.mods[key] = Mod(key, color, parent=mods)
+            self.obj_colors.clear()
+        self._recolor()
+
     def __enter__(self):
         pass
 
@@ -122,7 +145,8 @@ class PkgModel:
     def _recolor(self):
         if self._color_driver:
             self._color_driver.active = False
-        self._color_driver = CoroDriver(colorize(self), self)
+        else:
+            self._color_driver = CoroDriver(colorize(self), self)
 
     def _colorize(self, item, new_color):
         if item.underlying_object not in self.obj_colors:
@@ -186,6 +210,10 @@ class PkgModel:
                     mod.color = color
                 else:
                     mods.mods[key] = Mod(key, color, parent=mods)
+            with open('mods.txt', 'w') as f:
+                for (kind, name), item in mods.mods.items():
+                    if item.color:
+                        print(item.color.name, kind, name, file=f)
         self._recolor()
 
     def add_subject(self, text):
@@ -359,10 +387,14 @@ def get_main():
 
     act.actAddPkg.triggered.connect(add_pkg)
 
-    pkg_model.add_subject('python3-dnf')
-    pkg_model.add_subject('libselinux-python3')
-    pkg_model.add_subject('python3-pip')
-    pkg_model.add_subject('python3-wheel')
+    with open('add.txt') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('#'):
+                continue
+            pkg_model.add_subject(line)
 
     return window, pkg_model
 

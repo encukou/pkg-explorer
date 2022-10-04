@@ -20,8 +20,20 @@
       <property name="uniformRowHeights">
        <bool>true</bool>
       </property>
-      <attribute name="headerVisible">
+      <property name="allColumnsShowFocus">
+       <bool>true</bool>
+      </property>
+      <property name="headerHidden">
        <bool>false</bool>
+      </property>
+      <attribute name="headerVisible">
+       <bool>true</bool>
+      </attribute>
+      <attribute name="headerMinimumSectionSize">
+       <number>1500</number>
+      </attribute>
+      <attribute name="headerDefaultSectionSize">
+       <number>500</number>
       </attribute>
      </widget>
     </item>
@@ -33,7 +45,7 @@
      <x>0</x>
      <y>0</y>
      <width>1067</width>
-     <height>29</height>
+     <height>30</height>
     </rect>
    </property>
   </widget>
